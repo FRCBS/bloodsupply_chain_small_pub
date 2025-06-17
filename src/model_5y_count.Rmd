@@ -1,6 +1,6 @@
 ---
 title: "Explaining 5 year donation count with FinDonor enrollment data"
-author: "Ellen Heikkinen, copilot and Mikko Arvas"
+author: "Ellen Heikkinen, Copilot and Mikko Arvas"
 date: "`r Sys.time()`"
 output:
   html_document:
@@ -22,66 +22,84 @@ Started from this copilot prompt:
 
 
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{r setup, include=FALSE} 
+knitr::opts_chunk$set(echo = TRUE) #include=FALSE leaves out the code chunk from the final report
 library(tidyverse)
 library(broom)
 library(ggplot2)
 library(readxl)
-library(openxlsx)
+library(openxlsx) 
 library(gt)
 library(ggpubr)
 library(patchwork)
 library(here)
+library(dplyr)
+library(knitr)
 ```
 
+# Example with simulated data
 
-## Data simulation
-
+## Data simulation 
 
 ```{r simulate-data} 
-set.seed(123)
-n <- 500
+set.seed(123) #seed number makes the generated random numbers reproducible 
+n <- 500 #number of observations
 sim_data <- tibble( age = rnorm(n, mean = 35, sd = 10), bmi = rnorm(n, mean = 25, sd = 4),
-smoker = rbinom(n, 1, 0.3),
-exercise_freq = rpois(n, lambda = 3),
+smoker = rbinom(n, 1, 0.3), #binomial distribution, where P(smoker)=0.3
+exercise_freq = rpois(n, lambda = 3), #Poisson distribution, where lambda=mean of distribution
 donations_5yr = rpois(n, lambda = exp(0.1 * age - 0.05*  bmi + 0.5*  smoker + 0.2 * exercise_freq)) )
-glimpse(sim_data)
+glimpse(sim_data) #generates the view of data frame 
 ```
 
-## Modelling
-
-
+## Models
 
 ```{r fit-models}
 
 #TODO: WHY SHOULD WE USE ONE OR THE OTHER ERROR DISTRIBUTION BASED ON THEORY?
+#Different distributions are suitable for discrete and continuous variables
+#Poisson distribution is a discrete probability distribution so it is most suitable for modelling count variables. It does not allow for negative values.
+#Gaussian (normal) distribution is often used for continuous variables and allows negative values. Data is assumed to be normally distributed. 
+
+#The response variable here is amount of blood donations in 5 years time which is a count variable. Using the Poisson distribution ensures that the predicted values are non-negative and integer based.
+#Using the Gaussian distribution might result in negative predictions. 
 
 #Poisson model
 model_poisson <- glm(donations_5yr ~ age + bmi + smoker + exercise_freq, data = sim_data, family = poisson())
+# glm = generalized linear model 
+#(response variable ~ predictor variables, data =*name of data*, family = distribution())
+
 #Gaussian model
 model_gaussian <- glm(donations_5yr ~ age + bmi + smoker + exercise_freq, data = sim_data, family = gaussian())
+
+model_gaussian <- glm(donations_5yr ~ age + bmi + smoker + exercise_freq, data = sim_data, family = gaussian())
+
 summary(model_poisson)
 summary(model_gaussian)
 
-
 ```
 
-
+### Model diagnostics
 
 ```{r diagnostics-ggplot} 
 
 #TODO: WHAT OTHER DIAGNOSTIC PLOT WE NEED AND WHY?
+#The Scale-location plot checks for the residual values' constant variance. 
+#Constant variance is assumed in linear regression models. 
+#This makes the model's predictions more reliable across different levels of the predictor variables. 
 
-augment_poisson <- augment(model_poisson) 
+augment_poisson <- augment(model_poisson) #adds columnd containing the fitted values and residuals
 augment_gaussian <- augment(model_gaussian)
+
 #Residuals vs Fitted
 p1 <- ggplot(augment_poisson, aes(.fitted, .resid)) + geom_point(alpha = 0.5) + geom_hline(yintercept = 0, linetype = "dashed") + labs(title = "Poisson: Residuals vs Fitted", x = "Fitted", y = "Residuals")
 p2 <- ggplot(augment_gaussian, aes(.fitted, .resid)) + geom_point(alpha = 0.5, color = "blue") + geom_hline(yintercept = 0, linetype = "dashed") + labs(title = "Gaussian: Residuals vs Fitted", x = "Fitted", y = "Residuals")
+
+#Scale-location plot
+p3 <- ggplot(augment_poisson, aes(.fitted, sqrt(abs(.resid)))) + geom_point(alpha = 0.7, size = 1.5) + geom_smooth(method = "loess", se = FALSE, color = "red") + labs(title = "Poisson: Scale-Location", x = "Fitted", y = "sqrt(|Residuals|)") + theme_minimal()
+
+
 p1 + p2
-
-
-
+p3
 ```
 
 
@@ -90,17 +108,24 @@ p1 + p2
 tidy_poisson <- tidy(model_poisson, conf.int = TRUE) %>% 
   mutate(model = "Poisson") 
 
-tidy_gaussian <- tidy(model_gaussian, conf.int = TRUE) %>% mutate(model = "Gaussian")
+tidy_gaussian <- tidy(model_gaussian, conf.int = TRUE) %>% 
+  mutate(model = "Gaussian")
 
-effects_df <- bind_rows(tidy_poisson, tidy_gaussian) %>% 
-  filter(term != "(Intercept)") %>% 
-  mutate( crosses_zero = conf.low < 0 & conf.high > 0, point_shape = ifelse(crosses_zero, "open", "filled") )
+effects_df <- bind_rows(tidy_poisson, tidy_gaussian) %>% #combines the tidied data from both models 
+  filter(term != "(Intercept)") %>% #removes intercept 
+  mutate(crosses_zero = conf.low < 0 & conf.high > 0, 
+          point_shape = ifelse(crosses_zero, "open", "filled"))
 
 p1 <- ggplot(effects_df, aes(x = term, y = estimate, ymin = conf.low, ymax = conf.high, color = model)) + 
   geom_pointrange(aes(shape = point_shape), position = position_dodge(width = 0.6), size = 0.8) +
-  scale_shape_manual(values = c(filled = 16, open = 1)) + coord_flip() + labs(title = "Effect Estimates with 95% CI", y = "Estimate", x = "Variable") + theme_minimal()
+  scale_shape_manual(values = c(filled = 16, open = 1)) + 
+  coord_flip() + labs(title = "Effect Estimates with 95% CI", y = "Estimate", x = "Variable", shape = "Does not cross zero" ) + theme_minimal()
 
 p1
+
+#Check if confidence intervals cross zero
+print(effects_df)
+
 ```
 
 
@@ -109,38 +134,933 @@ p1
 
 ```{r save-results}
 
-ggsave(p1, 
-       filename = here("results/5yearscount/effect_estimates.png"),
-       width = 10,
-       height = 10,
-       units = "cm"
-       )
-
-
-ggsave(p1, 
-       filename = here("results/5yearscount/effect_estimates.pdf"),
-       width = 10,
-       height = 10,
-       units = "cm"
-       )
-
-
-save(effects_df, file=here("results/5yearscount/effect_estimates.RData"))
-write.xlsx(effects_df, file = here("results/5yearscount/effect_estimates.xlsx"))
-write_tsv(effects_df, file= here("results/5yearscount/effect_estimates.tsv"))
+# ggsave(p1, 
+#        filename = here("results/5yearscount/effect_estimates.png"),
+#        width = 10,
+#        height = 10,
+#        units = "cm"
+#        )
+# 
+# 
+# ggsave(p1, 
+#        filename = here("results/5yearscount/effect_estimates.pdf"),
+#        width = 10,
+#        height = 10,
+#        units = "cm"
+#        )
+# 
+# 
+# save(effects_df, file=here("results/5yearscount/effect_estimates.RData"))
+# write.xlsx(effects_df, file = here("results/5yearscount/effect_estimates.xlsx"))
+# write_tsv(effects_df, file= here("results/5yearscount/effect_estimates.tsv"))
 
 
 
 ```
 
 
-# Data exploration
+# FinDonor data
 
+The aim of this project is to identify which variables best predict the future five-year donation activity of blood donors enrolled in the FinDonor research project. The dataset contains 28 variables, of which 17 were included in the final models. A directed acyclic graph (DAG) was used to map out which predictor variables could have meaningful effects on the outcome variable and how the models would need to be adjusted to account for biasing effects. While in reality there are more complex and bidirectional relationships, for the sake of modelling, only the ones thought to be most influential were chosen to be displayed here. Ferritin levels and previous two-year donation count were chosen as the main exposure variables
+
+```{r}
+knitr::include_graphics("C:/Users/heikell/Pictures/Screenshots/DAGnoexp.png")
+```
+
+
+## Data exploration
 
 ```{r}
 load(file="c:/git_repot/DATA/findonor_5yc_rotmin.rdata")
-data <-  mindata
+data <- mindata
 summary(data)
+```
+
+### Visualization
+
+```{r ferritin histograms}
+p1 <- ggplot(data = mindata) +
+  geom_histogram(mapping = aes(x = Ferritin), binwidth = 0.5, fill = "#bd3174")+
+  labs(title = "Ferritin levels", x = "Ferritin (\u00B5g/l)", y = "Count")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7"))
+
+
+bigger <- mindata %>% 
+  filter(Ferritin > 400)
+
+p2 <- ggplot(data = bigger) +
+  geom_histogram(mapping = aes(x = Ferritin), binwidth = 0.5,  fill = "#bd3174")+
+  labs(title = "Ferritin levels (Ferritin > 400)", x = "Ferritin (\u00B5g/l)", y = "Count")+
+  theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7"))
+
+
+p3 <- ggplot(data = mindata) +
+  geom_histogram(mapping = aes(x = Ferritin), binwidth = 0.5,  fill = "#bd3174")+
+  labs(title = "Ferritin levels (log scaled)", x = "Ferritin (\u00B5g/l)", y = "Count")+
+  theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7")) +
+  scale_x_log10() #Logarithmic scale 
+
+
+p1
+p2
+p3
+```
+
+
+```{r histograms}
+p1 <- ggplot(data = mindata) +
+  geom_histogram(mapping = aes(x = BMI), binwidth = 0.5, fill = "#bd3174")+
+  labs(title = "BMI Distribution", x = "BMI (kg/m2)", y = "Count")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7"))
+  
+
+p2 <-ggplot(data = mindata) +
+  geom_histogram(mapping = aes(x = BMI), binwidth = 0.5, fill = "#bd3174")+
+  labs(title = "Log BMI Distribution", x = "BMI (kg/m2)", y = "Count")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7")) +
+scale_x_log10() #Logarithmic scale
+  
+
+p3 <- ggplot(data = mindata) +
+  geom_histogram(mapping = aes(x = TwoYearsFromStartCount_FB), binwidth = 0.5, fill = "#bd3174")+
+  labs(title = "Previous 2-year Donation Count", x = "2-year Donation Count", y = "Frequency")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7"))
+
+
+p4 <- ggplot(data = mindata) +
+  geom_histogram(mapping = aes(x = TwoYearsFromStartCount_FB), binwidth = 0.5, fill = "#bd3174")+
+  labs(title = "Log Previous 2-year Donation Count", x = "2-year Donation Count", y = "Frequency")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7")) +
+scale_x_log10() #Logarithmic scale
+
+p1+p2+p3+p4
 
 ```
 
+```{r log histograms}
+p1<- ggplot(data = mindata) +
+  geom_histogram(mapping = aes(x = DaysToPreviousFB), binwidth = 0.5, fill = "#bd3174")+
+  labs(title = "Days Since Previous Donation", x = "Days to Previous Donation", y = "Frequency")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7"))
+
+p2 <- ggplot(data = mindata) +
+  geom_histogram(mapping = aes(x = DaysToPreviousFB), binwidth = 0.5, fill = "#bd3174")+
+  labs(title = "Log Days Since Previous Donation", x = "Days to Previous Donation", y = "Frequency")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7")) +
+scale_x_log10() #Logarithmic scale
+
+
+p3 <- ggplot(data = mindata) +
+  geom_histogram(mapping = aes(x = Hb), binwidth = 0.5, fill = "#bd3174")+
+  labs(title = "Hemoglobin Distribution", x = "Hemoglobin (g/l)", y = "Frequency")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7"))
+
+p4 <- ggplot(data = mindata) +
+  geom_histogram(mapping = aes(x = Hb), binwidth = 0.5, fill = "#bd3174")+
+  labs(title = "Log Hemoglobin Distribution", x = "Hemoglobin (g/l)", y = "Frequency")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7")) +
+scale_x_log10() #Logarithmic scale
+
+p1+p2+p3+p4
+```
+
+
+```{r bar charts }
+p1 <- ggplot(data = na.omit(mindata)) +
+  geom_bar(mapping = aes(x = SelfEstimatedHealth), fill = "#bd3174")+
+  labs(title = "Self-estimated Health", x = "", y = "Count")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7"))+
+  coord_flip()
+
+
+p2 <- ggplot(data = na.omit(mindata)) +
+  geom_bar(mapping = aes(x = Menstruation), fill = "#bd3174")+
+  labs(title = "Menstruation", x = "", y = "Count")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7"))+
+  coord_flip()
+
+
+p3 <- ggplot(data = na.omit(mindata)) +
+  geom_bar(mapping = aes(x = Symptoms_QR21), fill = "#bd3174")+
+  labs(title = "Physical Symptoms", x = "", y = "Count")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7"))+
+  coord_flip()
+
+
+p4 <- ggplot(data = na.omit(mindata)) +
+  geom_bar(mapping = aes(x =  DailyActivity_QR59), fill = "#bd3174")+
+  labs(title = "Daily Activity", x = "", y = "Count")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7"))+
+coord_flip()
+
+p1+p2+p3+p4
+```
+
+```{r by group plots }
+p1 <- ggplot(data = mindata, mapping = aes(x = Group, y = Ferritin)) +
+  geom_boxplot()+
+   labs(title = "Ferritin by Group", x = "Group", y = "Ferritin (\u00B5g/l)")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7"))
+
+p2 <- ggplot(data = mindata, mapping = aes(x = Group, y = BMI)) +
+  geom_boxplot()+
+   labs(title = "BMI by Group", x = "Group", y = "BMI (kg/m2")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7"))
+
+p3 <- ggplot(data = mindata, aes(x = Group, fill = SelfEstimatedHealth)) +
+ geom_bar(position = "dodge") +
+ labs(title = "Self-estimated Health by Group", x = "Group", y = "Count")+
+  theme(panel.background = element_rect(fill = "#f5e6ed"))+
+  scale_fill_manual(values = c("Excellent" = "lightblue", "Very_good" = "lightgreen", "Good" = "#f2f1b1", "Satisfactory" = "#f578cd"))
+
+p4 <- ggplot(data = mindata, mapping = aes(x = Group, y = FUT_DaysInDef)) +
+  geom_boxplot()+
+   labs(title = "Deferral by Group", x = "Group", y = "Deferral (days)")+
+theme(axis.title.x = element_text(size = 12),
+axis.title.y = element_text(size = 12),
+panel.background = element_rect(fill = "#f5dae7"))
+
+p1+p2
+p3
+p4
+```
+
+## Models
+
+Below, the dataset is modified to serve the purposes of this project. The filtered variables were chosen based on the DAG. The limits for physiological outliers in the CRP, BMI, and Ferritin variables are based on a previous FinDonor article (https://doi.org/10.1371/journal.pone.0220862).
+
+```{r data}
+#Categorical variables are factorized in the data 
+
+#Replace NA in Menstruation with "no_period" for Men
+mindata$Menstruation[mindata$Group == "Men" & is.na(mindata$Menstruation)] <- "no_period"
+
+#Replace NA in Previous_Childbirth with "no" for Men
+mindata$PreviousChildbirth[mindata$Group == "Men" & is.na(mindata$PreviousChildbirth)] <- "no"
+
+#Apply log transformations 
+mindata$log_TwoYearsFromStartCount_FB <- log(mindata$TwoYearsFromStartCount_FB + 1) #Adding 1 to avoid log(0)
+mindata$log_DaysToPreviousFB <- log(mindata$DaysToPreviousFB + 1)
+mindata$log_Ferritin <- log(mindata$Ferritin + 1)
+mindata$log_FUT_DaysInDef <- log(mindata$FUT_DaysInDef + 1)
+mindata$log_FUT_DaysInHbDef <- log(mindata$FUT_DaysInHbDef + 1)
+
+#Standardizing log transformed variables 
+mindata <- mindata %>%
+ mutate(log_TwoYearsFromStartCount_FB = scale(log_TwoYearsFromStartCount_FB)[,1],
+ log_DaysToPreviousFB = scale(log_DaysToPreviousFB)[,1],
+ log_Ferritin = scale(log_Ferritin)[,1],
+ log_FUT_DaysInDef = scale(log_FUT_DaysInDef)[,1],
+ log_FUT_DaysInHbDef = scale(log_FUT_DaysInHbDef)[,1])
+
+
+#Filter data
+mindata_clean <- mindata %>%
+  dplyr::select(FUT_Whole_Blood_Count, Age, log_TwoYearsFromStartCount_FB, TwoYearsFromStartCount_FB, log_DaysToPreviousFB, DaysToPreviousFB, SelfEstimatedHealth, Menstruation, PreviousChildbirth, Symptoms_QR21, Sleep_QR31, PhysicalCondition_QR58, DailyActivity_QR59, BMI, Ferritin, Hb, log_FUT_DaysInDef, FUT_DaysInDef, log_FUT_DaysInHbDef, FUT_DaysInHbDef, Group, CRP)
+
+#Remove outliers 
+mindata_clean <- subset(mindata_clean, BMI <= 50 & CRP <= 20 & Ferritin <= 400)
+
+#Remove NA's
+mindata_clean <- mindata_clean[complete.cases(mindata_clean),]
+
+```
+
+```{r}
+summary(mindata_clean)
+```
+
+### Exposure: Ferritin
+
+```{r}
+knitr::include_graphics("C:/Users/heikell/Pictures/Screenshots/DAGexpferritin.png")
+```
+
+In this model, Ferritin is the main exposure variable. Based on the DAG above the following adjustment set is included in the model: Age, BMI and Days to Previous Donation. The error distribution is chosen based on this model, so it is fit first with the Gaussian distribution and then with the Poisson distribution. 
+
+```{r frequency model 1}
+#Model for effect of Ferritin on 5yr donation activity 
+#Minimal adjustment set: Age, BMI, DaysToPreviousFB
+
+#Here examine which error distribution, Gaussian or Poisson, would fit this data best
+
+gaussian_ferritin <- glm(formula = FUT_Whole_Blood_Count ~ 
+                           Ferritin +
+                           Age + 
+                           BMI + 
+                           log_DaysToPreviousFB,
+                         data = mindata_clean, family = gaussian)
+
+poisson_ferritin <- glm(formula = FUT_Whole_Blood_Count ~ 
+                           Ferritin +
+                           Age + 
+                           BMI + 
+                           log_DaysToPreviousFB,
+                         data = mindata_clean, family = poisson)
+
+summary(gaussian_ferritin)
+summary(poisson_ferritin)
+
+```
+
+
+```{r frequency model 1 diagnostics}
+#Model for effect of Ferritin on 5yr donation activity 
+#Minimal adjustment set: Age, BMI, DaysToPreviousFB
+
+plot(gaussian_ferritin)
+
+#Residuals vs. Fitted - Checking for linear relation assumptions. Horizontal line with no curve or pattern indicates linear relationship 
+#Normal Q-Q - Examining the residuals (normal) distribution. They should follow the dashed line. 
+#Scale-Location - Check for homoscedasticity. Horizontal line indicates constant variance of residuals
+#Residuals vs. leverage - Identifying extreme values that may influence results 
+
+```
+
+```{r}
+plot(poisson_ferritin)
+```
+
+To further assess the fit of each error distribution, a forest plot of the effect estimates and their 95% confidence intervals is provided below.
+
+```{r forest plots 1}
+tidy_ferriting <- tidy(gaussian_ferritin, conf.int = TRUE) %>% 
+ mutate(model = "FerritinG")
+
+tidy_ferritinp <- tidy(poisson_ferritin, conf.int = TRUE) %>% 
+ mutate(model = "FerritinP")
+
+effects_df <- bind_rows(tidy_ferritinp, tidy_ferriting) %>% 
+ filter(term != "(Intercept)") %>% 
+ mutate(crosses_zero = conf.low < 0 & conf.high > 0, 
+         point_shape = ifelse(crosses_zero, "open", "filled"))
+
+# Custom labels for the models
+custom_model_labels <- c(
+  "FerritinP" = "Ferritin (Poisson)",
+  "FerritinG" = "Ferritin (Gaussian)"
+)
+
+# Custom labels for the variables
+custom_titles <- c(
+  "log_DaysToPreviousFB" = "Days to Previous Donation"
+)
+
+p1 <- ggplot(effects_df, aes(x = term, y = estimate, ymin = conf.low, ymax = conf.high, color = model)) +
+ geom_pointrange(aes(shape = point_shape), position = position_dodge(width = 0.6), size = 0.8) +
+ scale_shape_manual(values = c("filled" = 16, "open" = 1), labels = c("Doesn't cross zero", "Crosses zero")) +
+ scale_color_manual(values = c("FerritinP" = "#7aa2ff", "FerritinG" = "#5bb591"), labels = custom_model_labels) +
+ coord_flip() + 
+ labs(title = "Effect Estimates with 95% CI", y = "Estimate", x = "Variable", shape = "Confidence Interval") + 
+ scale_x_discrete(labels = custom_titles) +
+ theme_minimal() +
+ theme(panel.background = element_rect(fill = "white"))
+
+p1
+```
+
+From here, the data will be fit to linear models using only the Poisson error distribution
+
+### Exposure: 2-year Donation count
+
+```{r}
+knitr::include_graphics("C:/Users/heikell/Pictures/Screenshots/DAGexpDonationC.png")
+```
+
+In this model, the main exposure variable is the Previous 2-year Donation Count. Based on the DAG, no adjustment set is needed since there are no biasing paths
+
+```{r frequency model 2}
+#Model for effect of Donation Count FB on 5yr donation activity 
+#No adjustment set required
+
+poisson_donationcount <- glm(formula = FUT_Whole_Blood_Count ~ 
+                            log_TwoYearsFromStartCount_FB,
+                         data = mindata_clean, family = poisson)
+
+```
+
+```{r frequency model 2 diagnostics}
+#Model for effect of Donation Count FB on 5yr donation activity 
+#No adjustment set required
+
+plot(poisson_donationcount)
+
+```
+
+
+```{r}
+summary(poisson_donationcount)
+
+```
+
+### Combined
+
+The final model includes all of the variables included in the DAG: Age, 2-year Donation Count, Days to Previous Donation, Self-estimated Health, Menstruation, Previous Childbirth, Physical Symptoms, Sleep, Physical Condition, Daily Activity, BMI, Ferritin, Hemoglobin, Days in Deferral and Days in Hemoglobin Deferral. 
+
+```{r frequency model 3}
+#Model for effect of all variables from model on 5yr donation activity 
+poisson_all <- glm(formula = FUT_Whole_Blood_Count ~ 
+                        Age + 
+                      log_TwoYearsFromStartCount_FB + 
+                      log_DaysToPreviousFB + 
+                      SelfEstimatedHealth + 
+                      Menstruation + 
+                      PreviousChildbirth + 
+                      Symptoms_QR21 + 
+                      Sleep_QR31 + 
+                      PhysicalCondition_QR58 + 
+                      DailyActivity_QR59 + 
+                      BMI + 
+                      Ferritin + 
+                      Hb +
+                      log_FUT_DaysInDef +
+                      log_FUT_DaysInHbDef,
+                    data = mindata_clean, family = poisson)
+
+```
+
+```{r frequency model 3 diagnostics}
+#Model for effect of all variables from model on 5yr donation activity 
+
+plot(poisson_all)
+
+```
+
+```{r}
+summary(poisson_all)
+```
+
+## Forest plot
+```{r forest plots 2, fig.width=7, fig.height=6}
+tidy_ferritin <- tidy(poisson_ferritin, conf.int = TRUE) %>% 
+ mutate(model = "Ferritin")
+
+tidy_donationcount <- tidy(poisson_donationcount, conf.int = TRUE) %>% 
+ mutate(model = "DonationCount")
+
+tidy_all <- tidy(poisson_all, conf.int = TRUE) %>% 
+ mutate(model = "All")
+
+effects_df <- bind_rows(tidy_ferritin, tidy_donationcount, tidy_all) %>% 
+ filter(term != "(Intercept)") %>% 
+ mutate(crosses_zero = conf.low < 0 & conf.high > 0, 
+         point_shape = ifelse(crosses_zero, "open", "filled"))
+
+# Custom labels for the models
+custom_model_labels <- c(
+ "Ferritin" = "Ferritin Model",
+ "DonationCount" = "Donation Count Model",
+ "All" = "Combined Model"
+)
+
+#Custom labels for the variables
+custom_titles <- c(
+  "Symptoms_QR21yes" = "Physical Symptoms - Yes",
+  "Symptoms_QR21no" = "Physical Symptoms - No",
+  "Menstruationregular_period" = "Regular period",
+  "Menstruationno_period" = "No period",
+  "log_FUT_DaysInHbDef" = "Days in Hb Deferral",
+  "log_FUT_DaysInDef" = "Days in Deferral",
+  "log_DaysToPreviousFB" = "Days to Previous Donation",
+  "log_TwoYearsFromStartCount_FB" = "2-year Donation Count",
+  "Hb" = "Hemoglobin (Hb)",
+  "Sleep_QR31.Q" = "Sleep Q",
+  "Sleep_QR31.L" = "Sleep L",
+  "Sleep_QR31.C" = "Sleep C",
+  "SelfEstimatedHealth.Q" = "Self-estimated Health Q",
+  "SelfEstimatedHealth.L" = "Self-estimated Health L",
+  "SelfEstimatedHealth.C" = "Self-estimated Health C",
+  "PreviousChildbirth.L" = "Previous Childbirth L",
+  "DailyActivity_QR59.Q" = "Daily Activity Q",
+  "DailyActivity_QR59.L" = "Daily Activity L",
+  "DailyActivity_QR59.C" = "Daily Activity C",
+  "PhysicalCondition_QR58.Q" = "Physical Condition Q",
+  "PhysicalCondition_QR58.L" = "Physical Condition L",
+  "PhysicalCondition_QR58.C" = "Physical Condition C",
+  "PhysicalCondition_QR58^4" = "Physical Condition ^4",
+  "PhysicalCondition_QR58^5" = "Physical Condition ^5"
+)
+
+p1 <- ggplot(effects_df, aes(x = term, y = estimate, ymin = conf.low, ymax = conf.high, color = model)) +
+ geom_pointrange(aes(shape = point_shape), position = position_dodge(width = 0.6), size = 0.8) +
+ scale_shape_manual(values = c(filled = 16, open = 1), labels = c("Doesn't cross zero", "Crosses zero"))  + scale_color_manual(values = c("Ferritin" = "#7aa2ff", "DonationCount" = "#5bb591", "All" = "#f76aca"), labels = custom_model_labels) +
+ coord_flip() + 
+ labs(title = "Effect Estimates with 95% CI", y = "Estimate", x = "Variable", shape = "Confidence Interval") + 
+  scale_x_discrete(labels = custom_titles) +
+ theme_minimal()+
+  theme(panel.background = element_rect(fill = "white"), panel.grid.major = element_line(color = "lightgray"), panel.grid.minor = element_line(color = "lightgray"))
+
+p1
+
+```
+
+## Stratified models 
+
+### Data
+
+The data is divided into three groups for the stratified models: pre-menopausal women, post-menopausal women, and men. No additional filters are applied at this stage. The same models as above will be fit to each group separately, allowing for the identification of any differences between the groups. 
+
+```{r data pre-menopausal}
+mindata_pre <- mindata_clean %>% 
+  filter(Group == "Pre-menopausal")
+
+summary(mindata_pre)
+```
+
+```{r data post-menopausal}
+mindata_post <- mindata_clean %>% 
+  filter(Group == "Post-menopausal")
+
+summary(mindata_post)
+```
+
+```{r data men}
+mindata_men <- mindata_clean %>% 
+  filter(Group == "Men")
+
+summary(mindata_men)
+```
+
+### Pre-menopausal women
+
+```{r ferritin pre}
+#Model for effect of Ferritin on 5yr donation activity in Pre-menopausal women
+#Minimal adjustment set: Age, BMI, DaysToPreviousFB
+ferritinpre <- glm(formula = FUT_Whole_Blood_Count ~ 
+                           Ferritin +
+                           Age + 
+                           BMI + 
+                           log_DaysToPreviousFB,
+                         data = mindata_pre, family = poisson)
+
+summary(ferritinpre)
+
+```
+
+```{r}
+plot(ferritinpre)
+```
+
+```{r donation count pre}
+#Model for effect of Donation Count FB on 5yr donation activity in Pre-menopausal women
+#No adjustment set required
+
+donationcount_pre <- glm(formula = FUT_Whole_Blood_Count ~ 
+                            log_TwoYearsFromStartCount_FB,
+                         data = mindata_pre, family = poisson)
+
+summary(donationcount_pre)
+
+```
+
+```{r}
+plot(donationcount_pre)
+```
+
+```{r combined pre}
+#Model for effect of all variables from model on 5yr donation activity in Pre-menopausal women
+combined_pre <- glm(formula = FUT_Whole_Blood_Count ~ 
+                        Age + 
+                      log_TwoYearsFromStartCount_FB + 
+                      log_DaysToPreviousFB + 
+                      SelfEstimatedHealth + 
+                      #Menstruation + 
+                      PreviousChildbirth + 
+                      Symptoms_QR21 + 
+                      Sleep_QR31 + 
+                      PhysicalCondition_QR58 + 
+                      DailyActivity_QR59 + 
+                      BMI + 
+                      Ferritin + 
+                      Hb +
+                      log_FUT_DaysInDef +
+                      log_FUT_DaysInHbDef,
+                    data = mindata_pre, family = poisson)
+
+summary(combined_pre)
+
+```
+
+```{r}
+plot(combined_pre)
+```
+
+
+### Post-menopausal women 
+```{r ferritin post}
+#Model for effect of Ferritin on 5yr donation activity in Post-menopausal women
+#Minimal adjustment set: Age, BMI, DaysToPreviousFB
+ferritinpost <- glm(formula = FUT_Whole_Blood_Count ~ 
+                           Ferritin +
+                           Age + 
+                           BMI + 
+                           log_DaysToPreviousFB,
+                         data = mindata_post, family = poisson)
+
+summary(ferritinpost)
+
+```
+
+```{r}
+plot(ferritinpost)
+```
+
+
+```{r donation count post}
+#Model for effect of Donation Count FB on 5yr donation activity in Post-menopausal women
+#No adjustment set required
+
+donationcount_post <- glm(formula = FUT_Whole_Blood_Count ~ 
+                            log_TwoYearsFromStartCount_FB,
+                         data = mindata_post, family = poisson)
+
+summary(donationcount_post)
+
+```
+
+```{r}
+plot(donationcount_post)
+```
+
+```{r combined post}
+#Model for effect of all variables from model on 5yr donation activity in Post-menopausal women
+combined_post <- glm(formula = FUT_Whole_Blood_Count ~ 
+                        Age + 
+                      log_TwoYearsFromStartCount_FB + 
+                      log_DaysToPreviousFB + 
+                      SelfEstimatedHealth + 
+                      #Menstruation + 
+                      PreviousChildbirth + 
+                      Symptoms_QR21 + 
+                      Sleep_QR31 + 
+                      PhysicalCondition_QR58 + 
+                      DailyActivity_QR59 + 
+                      BMI + 
+                      Ferritin + 
+                      Hb +
+                      log_FUT_DaysInDef +
+                      log_FUT_DaysInHbDef,
+                    data = mindata_post, family = poisson)
+
+summary(combined_post)
+
+```
+
+```{r}
+plot(combined_post)
+```
+
+### Men 
+```{r ferritin men}
+#Model for effect of Ferritin on 5yr donation activity in Men
+#Minimal adjustment set: Age, BMI, DaysToPreviousFB
+
+ferritinmen <- glm(formula = FUT_Whole_Blood_Count ~ 
+                           Ferritin +
+                           Age + 
+                           BMI + 
+                           log_DaysToPreviousFB,
+                         data = mindata_men, family = poisson)
+
+summary(ferritinmen)
+
+```
+
+```{r}
+plot(ferritinmen)
+```
+
+```{r donation count men}
+#Model for effect of Donation Count FB on 5yr donation activity in Men
+#No adjustment set required
+
+donationcount_men <- glm(formula = FUT_Whole_Blood_Count ~ 
+                            log_TwoYearsFromStartCount_FB,
+                         data = mindata_men, family = poisson)
+
+summary(donationcount_men)
+
+```
+
+```{r}
+plot(donationcount_men)
+```
+
+```{r combined men}
+#Model for effect of all variables from model on 5yr donation activity in Pre-menopausal women
+combined_men <- glm(formula = FUT_Whole_Blood_Count ~ 
+                        Age + 
+                      log_TwoYearsFromStartCount_FB + 
+                      log_DaysToPreviousFB + 
+                      SelfEstimatedHealth + 
+                      #Menstruation + 
+                      #PreviousChildbirth + 
+                      Symptoms_QR21 + 
+                      Sleep_QR31 + 
+                      PhysicalCondition_QR58 + 
+                      DailyActivity_QR59 + 
+                      BMI + 
+                      Ferritin + 
+                      Hb +
+                      log_FUT_DaysInDef +
+                      log_FUT_DaysInHbDef,
+                    data = mindata_men, family = poisson)
+
+summary(combined_men)
+
+```
+
+```{r}
+plot(combined_men)
+```
+
+
+### Plots 
+#### Ferritin models
+```{r forest plot ferritin}
+tidy_ferritinpre <- tidy(ferritinpre, conf.int = TRUE) %>% 
+ mutate(model = "FerritinPre")
+
+tidy_ferritinpost <- tidy(ferritinpost, conf.int = TRUE) %>% 
+ mutate(model = "FerritinPost")
+
+tidy_ferritinmen <- tidy(ferritinmen, conf.int = TRUE) %>% 
+ mutate(model = "FerritinMen")
+
+effects_df <- bind_rows(tidy_ferritinpre, tidy_ferritinpost, tidy_ferritinmen, tidy_ferritin) %>% 
+ filter(term != "(Intercept)") %>% 
+ mutate(crosses_zero = conf.low < 0 & conf.high > 0, 
+         point_shape = ifelse(crosses_zero, "open", "filled"))
+
+# Custom labels for the models
+custom_model_labels <- c(
+ "FerritinPre" = "Ferritin Pre-menopausal women",
+ "FerritinPost" = "Ferritin Post-menopausal women",
+ "FerritinMen" = "Ferritin Men",
+ "Ferritin" = "Ferritin All Groups" )
+
+#Custom labels for the variables
+custom_titles <- c(
+  "log_DaysToPreviousFB" = "Days to Previous Donation"
+)
+
+p1 <- ggplot(effects_df, aes(x = term, y = estimate, ymin = conf.low, ymax = conf.high, color = model)) +
+ geom_pointrange(aes(shape = point_shape), position = position_dodge(width = 0.6), size = 0.8) +
+ scale_shape_manual(values = c(filled = 16, open = 1), labels = c("Doesn't cross zero", "Crosses zero"))  + scale_color_manual(values = c("FerritinPre" = "#f76aca", "FerritinPost" = "#c183f7", "FerritinMen" = "#7aa2ff","Ferritin" = "#5bb591"), labels = custom_model_labels) +
+ coord_flip() + 
+ labs(title = "Effect Estimates with 95% CI", y = "Estimate", x = "Variable", shape = "Confidence Interval") + 
+  scale_x_discrete(labels = custom_titles) +
+ theme_minimal()+
+  theme(panel.background = element_rect(fill = "white"))
+
+p1
+
+```
+
+This plot compares the effect estimates and the 95% confidence intervals of the stratified ferritin models to the ones from the non-stratified ferritin model.
+
+#### Donation Count Models
+```{r forest plot donationcount}
+tidy_donationcountpre <- tidy(donationcount_pre, conf.int = TRUE) %>% 
+ mutate(model = "DonationCountPre")
+
+tidy_donationcountpost <- tidy(donationcount_post, conf.int = TRUE) %>% 
+ mutate(model = "DonationCountPost")
+
+tidy_donationcountmen <- tidy(donationcount_men, conf.int = TRUE) %>% 
+ mutate(model = "DonationCountMen")
+
+
+
+effects_df <- bind_rows(tidy_donationcountpre, tidy_donationcountpost, tidy_donationcountmen, tidy_donationcount) %>% 
+ filter(term != "(Intercept)") %>% 
+ mutate(crosses_zero = conf.low < 0 & conf.high > 0, 
+         point_shape = ifelse(crosses_zero, "open", "filled"))
+
+# Custom labels for the models
+custom_model_labels <- c(
+ "DonationCountPre" = "Donation Count Pre-menopausal women",
+ "DonationCountPost" = "Donation Count Post-menopausal women",
+ "DonationCountMen" = "DonationCount Men",
+ "DonationCount" = "Donation Count All Groups"
+)
+
+#Custom labels for the variables
+custom_titles <- c(
+  "log_TwoYearsFromStartCount_FB" = "Previous 2-year Donation Count"
+)
+
+p1 <- ggplot(effects_df, aes(x = term, y = estimate, ymin = conf.low, ymax = conf.high, color = model)) +
+ geom_pointrange(aes(shape = point_shape), position = position_dodge(width = 0.6), size = 0.8) +
+ scale_shape_manual(values = c(filled = 16, open = 1), labels = c("Doesn't cross zero", "Crosses zero"))  + scale_color_manual(values = c("DonationCountPre" = "#f76aca", "DonationCountPost" = "#c183f7", "DonationCountMen" = "#7aa2ff", "DonationCount" = "#5bb591"), labels = custom_model_labels) +
+ coord_flip() + 
+ labs(title = "Effect Estimates with 95% CI", y = "Estimate", x = "Variable", shape = "Confidence Interval") + 
+  scale_x_discrete(labels = custom_titles) +
+ theme_minimal()+
+  theme(panel.background = element_rect(fill = "white"))
+
+p1
+
+```
+
+This plot compares the effect estimates and the 95% confidence intervals of the stratified Donation Count models to those of the non-stratified Donation count model. 
+
+#### Scatterplots
+
+```{r, fig.width=10, fig.height=10, out.width="100%", out.height="100%"}
+p1 <- ggplot(data = mindata_clean, aes(x = Ferritin, y = FUT_Whole_Blood_Count, color = Group)) +
+   geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE) +
+   facet_grid(Group ~ ., scales = "free_y")  +
+   labs(title = "Fig 1.",
+        x = "Ferritin (\u00B5g/l)",
+        y = "5-year Blood Donation Count") +
+   theme_minimal()+
+  theme(panel.background = element_rect(fill = "white"), panel.grid.major = element_line(color = "lightgray"), panel.grid.minor = element_line(color = "lightgray"),
+ text = element_text(size = 12, face = "bold")
+)+
+    guides(color = "none")+
+  scale_color_manual(values = c("Pre-menopausal" = "#f76aca", "Post-menopausal" = "#c183f7", "Men" = "#7aa2ff"))
+
+p2 <- ggplot(data = mindata_clean, aes(x = Age, y = FUT_Whole_Blood_Count, color = Group)) +
+   geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE) +
+   facet_grid(Group ~ ., scales = "free_y")  +
+   labs(title = "Fig 2.",
+        x = "Age (years)",
+        y = "") +
+    theme_minimal()+
+  theme(panel.background = element_rect(fill = "white"), panel.grid.major = element_line(color = "lightgray"), panel.grid.minor = element_line(color = "lightgray"),
+ text = element_text(size = 12, face = "bold")
+)+
+    guides(color = "none")+
+  scale_color_manual(values = c("Pre-menopausal" = "#f76aca", "Post-menopausal" = "#c183f7", "Men" = "#7aa2ff"))
+
+p3<- p3<- ggplot(data = mindata_clean, aes(x = DaysToPreviousFB, y = FUT_Whole_Blood_Count, color = Group)) +
+   geom_point(alpha = 0.4) +
+  geom_smooth(method = "glm", method.args = list(family = poisson), se = FALSE) +
+   facet_grid(Group ~ ., scales = "free_y")  +
+   labs(title = "Fig 3.",
+        x = "Days to Previous Donation",
+        y = "5-year Blood Donation Count") +
+    theme_minimal()+
+  theme(panel.background = element_rect(fill = "white"), panel.grid.major = element_line(color = "lightgray"), panel.grid.minor = element_line(color = "lightgray"),
+ text = element_text(size = 12, face = "bold")
+) +
+    guides(color = "none")+
+  scale_color_manual(values = c("Pre-menopausal" = "#f76aca", "Post-menopausal" = "#c183f7", "Men" = "#7aa2ff"))
+
+ p4 <- ggplot(data = mindata_clean, aes(x = BMI, y = FUT_Whole_Blood_Count, color = Group)) +
+   geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE) +
+   facet_grid(Group ~ ., scales = "free_y")  +
+   labs(title = "Fig 4.",
+        x = "BMI (kg/m^2)",
+        y = "") +
+     theme_minimal()+
+  theme(panel.background = element_rect(fill = "white"), panel.grid.major = element_line(color = "lightgray"), panel.grid.minor = element_line(color = "lightgray"),
+ text = element_text(size = 12, face = "bold")
+)+
+    guides(color = "none")+
+  scale_color_manual(values = c("Pre-menopausal" = "#f76aca", "Post-menopausal" = "#c183f7", "Men" = "#7aa2ff"))
+ 
+ p1+p2+p3+p4
+
+```
+
+The scatter plots above visualize the relationships between the independent variables from the Ferritin Model and the dependent variable, 5-year Donation Count. The plots are divided into three groups: pre-menopausal women, post-menopausal women, and men.
+
+```{r, fig.width=5, fig.height=8}
+ggplot(data = mindata_clean, aes(x = TwoYearsFromStartCount_FB, y = FUT_Whole_Blood_Count, color = Group)) +
+   geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", se = FALSE) +
+   facet_grid(Group ~ ., scales = "free_y")  +
+   labs(title = "",
+        x = "Previous 2-year Donation Count",
+        y = "5-year Donation Count") +
+     theme_minimal()+
+  theme(panel.background = element_rect(fill = "white"), panel.grid.major = element_line(color = "lightgray"), panel.grid.minor = element_line(color = "lightgray"),
+ text = element_text(size = 12, face = "bold")
+)+
+    guides(color = "none")+
+  scale_color_manual(values = c("Pre-menopausal" = "#f76aca", "Post-menopausal" = "#c183f7", "Men" = "#7aa2ff"))
+```
+
+The plot above visualizes the relationship between Previous 2-year Donation Count and Future 5-year Donation Count.
+
+## Correlation matrix
+```{r corrplot}
+library(corrplot)
+```
+
+```{r corrdata}
+#Filter data
+mindata_corr <- mindata_clean %>%
+  dplyr::select(FUT_Whole_Blood_Count, Age, log_TwoYearsFromStartCount_FB, log_DaysToPreviousFB, SelfEstimatedHealth, Menstruation, PreviousChildbirth, Symptoms_QR21, Sleep_QR31, PhysicalCondition_QR58, DailyActivity_QR59, BMI, Ferritin, Hb, log_FUT_DaysInDef, log_FUT_DaysInHbDef, Group)
+
+#Remove NA's
+mindata_corr <- mindata_corr[complete.cases(mindata_clean),]
+
+#Convert factor columns to numeric
+factor_columns <- c("Menstruation", "PreviousChildbirth", "Symptoms_QR21", "Sleep_QR31", "PhysicalCondition_QR58", "DailyActivity_QR59", "Group", "SelfEstimatedHealth")
+
+mindata_corr[factor_columns] <- lapply(mindata_corr[factor_columns], function(x) {
+ as.numeric(x)
+})
+
+
+summary(mindata_corr)
+```
+
+
+```{r corrmatrix, fig.width=7, fig.height=7}
+# Compute the correlation matrix, handling NA values
+cor_matrix <- cor(mindata_corr)
+
+# Rename the columns and rows of the correlation matrix
+colnames(cor_matrix) <- c("5y Whole Blood Count", "Age", "Previous 2-year Donation Count", "Days to Previous Donation", "Self-Estimated Health", "Menstruation", "Previous Childbirth", "Physical Symptoms", "Sleep", "Physical Condition", "Daily Activity", "BMI", "Ferritin", "Hb", "Days in Deferral", "Days in Hb Deferral", "Group")
+rownames(cor_matrix) <- colnames(cor_matrix)
+
+# Define a custom color gradient
+col <- colorRampPalette(c("#2b6afc", "white", "#fa34bb"))(200)
+
+# Create the correlation plot with the custom color gradient
+corrplot(cor_matrix, method = "circle", col = col, tl.col = "black")
+
+```
+
+The correlation matrix is provided to examine if there are strong correlations between variables that according to the DAG should be independent from each other. 
