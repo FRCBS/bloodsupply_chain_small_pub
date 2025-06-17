@@ -1,0 +1,146 @@
+---
+title: "Explaining 5 year donation count with FinDonor enrollment data"
+author: "Ellen Heikkinen, copilot and Mikko Arvas"
+date: "`r Sys.time()`"
+output:
+  html_document:
+    toc: true
+    theme: united
+---
+
+
+GitHub: https://github.com/FRCBS/donor-recruitment-prediction/blob/main/src/5yearscount/model_5y_count.Rmd
+
+
+
+# Copilot example
+
+Started from this copilot prompt:
+
+"Dear copilot, would you write me the neceaasy contents of an R .Rmd file that uses tidyverse to: 1. "Simulate a data that contains a few explanatory variables that a relevant for count of blood donations in the next five years and the dependent variable count of blood donations in the next five years."; 2. "Fits two alternative models to quantify the effect the explanatory variables to count of blood donations in the next five years, the other model should use a gaussian error ditribution and the other poisson error distribution."; 3. "Plots relevant diagnostic plots for these two alternative models with a ggplot2 based code." ; 4. "Plots the effect estimates and their 95% confidence intervals of these two alternative models in a 'forest plot' like plot using ggplot2 based plotting coloring the effect estimates with different colors and specifying if the confidence intervals cross zero with filled or non-filled point". 5. "Saves the effect estimates and their 95% confidence intervals to rdata object, xlsx file and a tsv file for further use". Thank you!"
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(broom)
+library(ggplot2)
+library(readxl)
+library(openxlsx)
+library(gt)
+library(ggpubr)
+library(patchwork)
+library(here)
+```
+
+
+## Data simulation
+
+
+```{r simulate-data} 
+set.seed(123)
+n <- 500
+sim_data <- tibble( age = rnorm(n, mean = 35, sd = 10), bmi = rnorm(n, mean = 25, sd = 4),
+smoker = rbinom(n, 1, 0.3),
+exercise_freq = rpois(n, lambda = 3),
+donations_5yr = rpois(n, lambda = exp(0.1 * age - 0.05*  bmi + 0.5*  smoker + 0.2 * exercise_freq)) )
+glimpse(sim_data)
+```
+
+## Modelling
+
+
+
+```{r fit-models}
+
+#TODO: WHY SHOULD WE USE ONE OR THE OTHER ERROR DISTRIBUTION BASED ON THEORY?
+
+#Poisson model
+model_poisson <- glm(donations_5yr ~ age + bmi + smoker + exercise_freq, data = sim_data, family = poisson())
+#Gaussian model
+model_gaussian <- glm(donations_5yr ~ age + bmi + smoker + exercise_freq, data = sim_data, family = gaussian())
+summary(model_poisson)
+summary(model_gaussian)
+
+
+```
+
+
+
+```{r diagnostics-ggplot} 
+
+#TODO: WHAT OTHER DIAGNOSTIC PLOT WE NEED AND WHY?
+
+augment_poisson <- augment(model_poisson) 
+augment_gaussian <- augment(model_gaussian)
+#Residuals vs Fitted
+p1 <- ggplot(augment_poisson, aes(.fitted, .resid)) + geom_point(alpha = 0.5) + geom_hline(yintercept = 0, linetype = "dashed") + labs(title = "Poisson: Residuals vs Fitted", x = "Fitted", y = "Residuals")
+p2 <- ggplot(augment_gaussian, aes(.fitted, .resid)) + geom_point(alpha = 0.5, color = "blue") + geom_hline(yintercept = 0, linetype = "dashed") + labs(title = "Gaussian: Residuals vs Fitted", x = "Fitted", y = "Residuals")
+p1 + p2
+
+
+
+```
+
+
+
+```{r forest-plot} 
+tidy_poisson <- tidy(model_poisson, conf.int = TRUE) %>% 
+  mutate(model = "Poisson") 
+
+tidy_gaussian <- tidy(model_gaussian, conf.int = TRUE) %>% mutate(model = "Gaussian")
+
+effects_df <- bind_rows(tidy_poisson, tidy_gaussian) %>% 
+  filter(term != "(Intercept)") %>% 
+  mutate( crosses_zero = conf.low < 0 & conf.high > 0, point_shape = ifelse(crosses_zero, "open", "filled") )
+
+p1 <- ggplot(effects_df, aes(x = term, y = estimate, ymin = conf.low, ymax = conf.high, color = model)) + 
+  geom_pointrange(aes(shape = point_shape), position = position_dodge(width = 0.6), size = 0.8) +
+  scale_shape_manual(values = c(filled = 16, open = 1)) + coord_flip() + labs(title = "Effect Estimates with 95% CI", y = "Estimate", x = "Variable") + theme_minimal()
+
+p1
+```
+
+
+
+
+
+```{r save-results}
+
+ggsave(p1, 
+       filename = here("results/5yearscount/effect_estimates.png"),
+       width = 10,
+       height = 10,
+       units = "cm"
+       )
+
+
+ggsave(p1, 
+       filename = here("results/5yearscount/effect_estimates.pdf"),
+       width = 10,
+       height = 10,
+       units = "cm"
+       )
+
+
+save(effects_df, file=here("results/5yearscount/effect_estimates.RData"))
+write.xlsx(effects_df, file = here("results/5yearscount/effect_estimates.xlsx"))
+write_tsv(effects_df, file= here("results/5yearscount/effect_estimates.tsv"))
+
+
+
+```
+
+
+# Data exploration
+
+
+```{r}
+load(file="c:/git_repot/DATA/findonor_5yc_rotmin.rdata")
+data <-  mindata
+summary(data)
+
+```
+
