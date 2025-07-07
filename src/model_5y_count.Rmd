@@ -164,7 +164,7 @@ print(effects_df)
 The aim of this project is to identify which variables best predict the future five-year donation activity of blood donors enrolled in the FinDonor research project. The dataset contains 28 variables, of which 17 were included in the final models. A directed acyclic graph (DAG) was used to map out which predictor variables could have meaningful effects on the outcome variable and how the models would need to be adjusted to account for biasing effects. While in reality there are more complex and bidirectional relationships, for the sake of modelling, only the ones thought to be most influential were chosen to be displayed here. Ferritin levels and previous two-year donation count were chosen as the main exposure variables
 
 ```{r}
-knitr::include_graphics("C:/Users/heikell/Pictures/Screenshots/DAGnoexp.png")
+knitr::include_graphics("../data/DAGnoexp.png")
 ```
 
 
@@ -407,7 +407,7 @@ summary(mindata_clean)
 ### Exposure: Ferritin
 
 ```{r}
-knitr::include_graphics("C:/Users/heikell/Pictures/Screenshots/DAGexpferritin.png")
+knitr::include_graphics("../data/DAGexpferritin.png")
 ```
 
 In this model, Ferritin is the main exposure variable. Based on the DAG above the following adjustment set is included in the model: Age, BMI and Days to Previous Donation. The error distribution is chosen based on this model, so it is fit first with the Gaussian distribution and then with the Poisson distribution. 
@@ -498,7 +498,7 @@ From here, the data will be fit to linear models using only the Poisson error di
 ### Exposure: 2-year Donation count
 
 ```{r}
-knitr::include_graphics("C:/Users/heikell/Pictures/Screenshots/DAGexpDonationC.png")
+knitr::include_graphics("../data/DAGexpDonationC.png")
 ```
 
 In this model, the main exposure variable is the Previous 2-year Donation Count. Based on the DAG, no adjustment set is needed since there are no biasing paths
